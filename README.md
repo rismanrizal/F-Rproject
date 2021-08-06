@@ -1,10 +1,9 @@
 # F-Rproject
 R code for statistical analysis
 
-CONTOH R CODE DALAM MENGANALISIS DATA DENGAN BERBAGAI METODE ANALISIS (GO TO BRANCH)
+Repository ini berisi Python code yang digunakan untuk menganalisis data dengan berbagai metode statistika
 
-SPESIFIK DATASET DAN HANYA DIGUNAKAN UNTUK KEPENTINGAN ANALISIS SEMATA
+Metode yang digunakan dikelompokkan dalam folder
 
-MUNGKIN AKAN DIPERLUKAN PROSES DATA CLEANING TERLEBIH DAHULU PADA BEBERAPA KONDISI DATASET LAIN
-
-CODE INI DIBUAT HANYA UNTUK KEPENTINGAN PRIBADI
+Disclaimer: Dataset ada yang bersifat spesifik (tidak ditampilkan) dan hanya digunakan untuk kepentingan analisis semata.
+Code ini dibuat hanya untuk tujuan pribadi agar mudah diakses dan dipelajari manakala dibutuhkan
