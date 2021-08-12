@@ -19,7 +19,7 @@ sum(is.na(abalone))
 
 #----MEMBAGI DUA KELAS: TRAINING & TESTING----
 set.seed(1806)
-ind <- sample(1:nrow(abalone), 0.8*nrow(abalone))
+index <- sample(1:nrow(abalone), 0.8*nrow(abalone))
 training <- abalone[index,]
 testing <- abalone[-index,]
 
