@@ -6,6 +6,7 @@ library(lavaan)
 library(psych)
 library(REdaS)
 library(grid)
+library(ltm)
 
 #membuat dataframe untuk setiap variabel
 AFF <- data.frame(humor$af1, humor$af2, humor$af3, humor$af4,
@@ -34,3 +35,9 @@ alpha(AFF, check.keys = T) #apabila ada yang negative correlation, akan otomatis
 alpha(ENH, check.keys = T)
 alpha(AGR, check.keys = T)
 alpha(DFT, check.keys = T)
+
+#menggunakan metode lain untuk reliabilitas
+cronbach.alpha(AFF)
+cronbach.alpha(ENH)
+cronbach.alpha(AGR)
+cronbach.alpha(DFT)
