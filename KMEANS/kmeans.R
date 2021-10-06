@@ -10,7 +10,7 @@ library(tidyverse)
 
 #----CONTOH 1----
 #----TUJUAN----
-# ingin mengelempokkan clud di eropa berdasarkan beberapa parameter
+# ingin mengelempokkan club di eropa berdasarkan beberapa parameter
 
 euclub <- read.csv('link')
 club <- euclub %>% remove_rownames %>% column_to_rownames(var="team")
