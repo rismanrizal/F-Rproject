@@ -1,0 +1,276 @@
+---
+title: "Genetic Algorithm untuk Mencari Nilai 'k' Optimum pada Klasifikasi kNN"
+output:
+  html_notebook: default
+  pdf_document: default
+---
+Dalam melakukan simulasi ini, pencarian nilai k terbaik (dengan parameter tingkat akurasi tertinggi) dilakukan dengan dua pendekatan melalui 'GA' dan satu pendekatan dengan metode yang 'standar' dan umum i.e. cross-validation. Sehingga total ada tiga metode pembentukan model kNN. 
+
+# Data yang Digunakan
+```{r}
+library(readr)
+masterdata <- read_csv("Data Vaksin Copy.csv")
+```
+
+# METODE 1: PENDEKATAN UMUM (CROSS-VALIDATION)
+Library yang dibutuhkan adalah:
+```{r}
+library(caret)
+library(class)
+library(dplyr)
+```
+
+Perlu mengubah kategori variabel numeric menjadi factor (kecuali $usia)
+```{r}
+data_cv <- masterdata %>% mutate(td = as.factor(td), rp = as.factor(rp),
+                                 h_m = as.factor(h_m), st = as.factor(st),
+                                 ket = as.factor(ket))
+str(data_cv)
+```
+
+Mengetahui keseimbangan kelas variabel $ket
+```{r}
+table(data_cv$ket)
+```
+
+Membagi data menjadi dua kelas; training (80%) dan testing (20%)
+```{r}
+set.seed(1806)
+index_cv <- sample(1:nrow(data_cv), 0.8*nrow(data_cv))
+train_cv <- data_cv[index_cv,]
+test_cv <- data_cv[-index_cv,]
+```
+
+Membuat model knn; menggunakan kontrol parameter cv 10-folds dengan 3 kali pengulangan
+```{r}
+kontrol <- trainControl(method = "repeatedcv",
+                        number = 10, repeats = 3)
+```
+
+Membentuk model prediktifnya dengan metode kNN dan preprocessing data dengan standardisasi menggunakan 'center' dan 'scale'
+```{r}
+set.seed(1988)
+model_cv <- train(ket ~ ., data = train_cv,
+                  method = 'knn',
+                  tuneLength = 20,
+                  trControl = kontrol,
+                  preProc = c("center", "scale"))
+model_cv
+```
+
+Dari model prediktif tersebut diperoleh nilai k = 9 untuk menghasilkan nilai akurasi tertinggi pada data training. Ketiga nilai k tersebut memberikan nilai akurasi yang sama.
+
+Setelah memperoleh model prediktif, langkah selanjutnya adalah melalukan prediksi dengan menggunakan model tersebut pada data testing
+```{r}
+prediksi_cv <- predict(model_cv, newdata = test_cv)
+prediksi_cv
+```
+
+Overall performance model ditampilkan dengan confusionmatrix sebagai berikut
+```{r}
+cm_cv <- confusionMatrix(prediksi_cv, test_cv$ket)
+cm_cv
+```
+Membuat visualisasi confusion matrix
+```{r}
+fourfoldplot(cm_cv$table, color = c("peachpuff3", "pink2"),
+             conf.level = 0, margin = 1, main = "Confusion Matrix kNN-cv Model")
+```
+# END METODE 1
+
+###
+
+# METODE 2: GA DENGAN PEMBENTUKAN MODEL MENGGUNAKAN CLASS PACKAGE
+
+Library tambahan yang dibutuhkan:
+```{r}
+library(GA)
+
+```
+
+Untuk kali ini, variabel yang dilakukan standardisasi hanyalah $usia. Variabel lainnya dibiarkan as is sebagai factor type.
+```{r}
+data_gaclass <- masterdata %>% mutate(usia = scale(usia, center = T, scale = T))
+head(data_gaclass)
+```
+Membagi data menjadi dua kelas; training (80%) dan testing(20%)
+```{r}
+set.seed(1114)
+index_gaclass <- sample(1:nrow(data_gaclass), 0.8*nrow(data_gaclass))
+train_gaclass <- data_gaclass[index_gaclass,]
+test_gaclass <- data_gaclass[-index_gaclass,]
+```
+
+Nilai k dalam kNN bersifat diskrit dan tidak bisa bernilai negatif. Dengan kondisi tersebut, digunakan 'ga' dengan tipe binary. Untuk mentransformasikannya terlebih dahulu ditentukan berapa estimasi range k yang diinginkan, misalnya 1 sampai dengan 64. Karena bersifat binary (0,1) maka range tersebut perlu disesuaikan:
+```{r}
+log2(64) # sebagai representasi dari 2^6
+```
+dari perhitungan log2, dibutuhkan setidaknya 6 bits.
+
+Langkah selanjutnya adalah membentuk objective function. Untuk menemukan k terbaik, parameternya adalah akurasi tertinggi. Karena nilai k tidak bisa 0, maka apabila kita ubah k=1 untuk k=0 dan k=64 untuk nilai k>64.
+```{r}
+
+fit_glass <- function(x)
+{ 
+  k = binary2decimal(x[1:6])
+  if(k==0)
+  {
+    k <- 1
+  }
+  if(k>64)
+  {
+    k <- 64
+  }
+  model_gaclass <- knn(train = train_gaclass, test = test_gaclass, 
+                   train_gaclass$ket, k = k)
+  tabel_gaclass <- table(model_gaclass, test_gaclass$ket)
+  akurasi_gaclass <- sum(diag(tabel_gaclass)/sum(tabel_gaclass))
+  
+  return(akurasi_gaclass)
+}
+
+```
+
+Kemudian dibentuk model 'ga'. Pada kali ini digunakan iterasi maksimum sebanyak 50 dengan ukuran populasi default sebesar 50. Kemudian proses iterasi berhenti ketika menemukan 10 nilai tertinggi secara berurutan. Ini bisa dikostumisasi sesuai dengan intensi dan ketersediaan waktu, karena pasti time consuming.
+```{r}
+ga_class <- ga(type = "binary", fitness = fit_glass, nBits = 6,
+           maxiter = 50, popSize = 50, seed = 1103, keepBest = T,
+           run = 10, parallel = T)
+
+```
+Setelah itu kita membuat summary dari model 'ga' tersebut
+```{r}
+summary(ga_class)
+```
+
+Kemudian dibuat plot untuk menggambarkan proses iterasi
+```{r}
+plot(ga_class)
+```
+
+Untuk mengetahui berapa nilai k terbaik, maka perlu mentransformasi decision variabel ke dalam bentuk dataframe
+```{r}
+ga_class_fit <- as.data.frame(ga_class@population)
+ga_class_k <- apply(ga_class_fit[,1:6],1,binary2decimal)
+
+```
+
+Kemudian kita dapat melihat berapa solusi nilai k dari populasi final
+```{r}
+data.frame(k = ga_class_k, akurasi = ga_class@fitness) %>% 
+  mutate(k = ifelse(k == 0, 1, k), k = ifelse(k > 64, 64, k)) %>%
+  distinct() %>% arrange(desc(akurasi))
+```
+Itulah estimasi nilai k terbaik bersamaan dengan prediksi tingkat akurasinya. Dengan menggunakan GA pada pemodelan kNN pada package 'class' nilai k (e.g. 9) dapat menghasilkan tingkat akurasi bahkan 100%.
+
+# END METODE 2
+
+###
+
+# METODE 3: GA DENGAN PEMBENTUKAN MODEL MENGGUNAKAN TIDYMODELS PACKAGE
+
+Metode ini secara prinsip sama seperti Metode 2, yang membedakan adalah metode estimasi model kNN. 
+
+Library tambahan yang dibutuhkan:
+```{r}
+library(kknn)
+library(tidymodels)
+library(recipes)
+library(themis)
+```
+
+Khusus untuk model kNN dengan Tidymodels, disyaratkan mengubah variabel prediktor factor menjadi numeric untuk kemudian (bersamaan dengan variabel numeric yang lain) distandardisasi. Selain itu, proporsi kelas juga disarankan seimbang. Oleh karena itu, kita akan menggunakan upsample untuk meningkatkan jumlah sampel data training sehingga ada keseimbangan antar kelas.
+
+```{r}
+data_gatidy <- masterdata %>% mutate(ket = as.factor(ket))
+str(data_gatidy)
+```
+
+Kita bagi terlebih dahulu jumlah sampel
+```{r}
+set.seed(505)
+index_gatidy <- initial_split(data_gatidy, prop = 0.8, strata = "ket")
+index_gatidy
+
+```
+
+Setelah itu, dilakukan standardisasi semua variabel prediktor numeric dan melakukan upsample 
+```{r}
+resep <- recipe(ket ~ ., data = training(index_gatidy)) %>% 
+  step_upsample(ket) %>% 
+  step_scale(all_numeric()) %>% prep()
+
+train_gatidy <- juice(resep)
+test_gatidy <- bake(resep, testing(index_gatidy))
+table(train_gatidy$ket)
+```
+
+Diperoleh sampel training sebesar 310 dengan proporsi antar kelas yang seimbang. 
+
+Langkah selanjutnya, sama seperti Metode dua. 
+Objective function:
+```{r}
+# sejatinya bisa menggunakan function yang dari metode 2, tapi agar terstruktur tetap dituliskan
+
+fit_tidy = function(x)
+{ 
+  z = binary2decimal(x[1:6])
+  
+  if(z == 0) {
+    z <- 1
+  }
+  if(z > 64) {
+    z <- 64
+  }
+  
+  # spesifikasi model dengan menggunakan tidymodels
+  model_gatidy <- nearest_neighbor(neighbors = z, 
+                                       weight_func = "optimal") %>% 
+    set_engine("kknn") %>% set_mode("classification") %>%
+                                  fit(ket ~ ., data = train_gatidy)
+  
+  # model fit
+  set.seed(523)
+  yscore <- model_gatidy %>% predict(test_gatidy)
+  tabel_gatidy <- table(yscore$.pred_class, test_gatidy$ket)
+  
+  akurasi_gatidy <- sum(diag(tabel_gatidy)/sum(tabel_gatidy))
+  
+  return(akurasi_gatidy)
+}
+
+```
+
+Sama seperti sebelumnya, kita membentuk model 'ga'
+```{r}
+ga_tidy <- ga(type = "binary", fitness = fit_tidy, nBits = 6, seed = 553, 
+             popSize = 50, maxiter = 50, run = 10, parallel = T, 
+             keepBest = T)
+```
+
+Setelah itu summarynya:
+```{r}
+summary(ga_tidy)
+```
+
+Kemudian plotnya:
+```{r}
+plot(ga_tidy)
+```
+
+Untuk mengetahui berapa nilai k terbaik, maka perlu mentransformasi decision variabel ke dalam bentuk dataframe
+```{r}
+ga_tidy_fit <- as.data.frame(ga_tidy@population)
+ga_tidy_k <- apply(ga_tidy_fit[,1:6],1,binary2decimal)
+
+```
+
+Kemudian kita dapat melihat berapa solusi nilai k dari populasi final
+```{r}
+data.frame(k = ga_tidy_k, akurasi = ga_tidy@fitness) %>% 
+  mutate(k = ifelse(k == 0, 1, k), k = ifelse(k > 64, 64, k)) %>%
+  distinct() %>% arrange(desc(akurasi))
+```
+Itulah estimasi nilai k terbaik bersamaan dengan prediksi tingkat akurasinya. Dengan menggunakan GA pemodelan kNN pada package 'tidymodels' nilai k (e.g. 5) dapat menghasilkan tingkat akurasi yang stabil 98%, sama seperti metode cv. Patut diduga karena kelas yang seimbang.
+
+#END
