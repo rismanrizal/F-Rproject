@@ -1,0 +1,765 @@
+---
+title: "Two-Way Manova: Eksperimen Rendaman Kulit Ikan"
+output: html_notebook
+---
+
+Diperoleh data hasil eksperimen rendaman kulit ikan dengan dua faktor (i.e. Konsentrasi dan Waktu perendaman garam alkali). Ingin diketahui apakah perlakuan tersebut berpengaruh/tidak terhadap dua variabel dependen sebagai output, yaitu Kandungan Lemak (**lemak**) dan Abu (**abu**) dari kulit ikan. Terdapat lima jenis Konsentrasi rendaman garam alkali (**konsentrasi**) yang digunakan sebagai percobaan, yaitu 0, 0.25, 0.50, 0.75, 1. Terdapat tiga jenis Waktu rendaman (**waktu**) yang digunakan sebagai percobaan, yaitu 30, 60, 90.
+
+
+------
+
+## (1) Library
+
+Package yang dibutuhkan dalam keseluruhan analisis ini adalah:
+
+```{r}
+library(rstatix)
+library(dplyr)
+library(mvnormalTest)
+library(heplots)
+library(gridExtra)
+library(gplots)
+library(ggplot2)
+library(effectsize)
+library(GGally)
+library(vegan)
+library(readr)
+library(formattable)
+library(hrbrthemes)
+library(viridis)
+library(DiagrammeR)
+library(MASS)
+library(Rmisc)
+
+```
+
+------
+
+## (2) Data dan Prosedur
+
+Pengumpulan data dilakukan dengan dua kali repetisi. Hasil yang diperoleh sebagai berikut:
+
+```{r}
+data <- read_csv("data.csv")
+
+formattable(data, align =c("c","c","c","c"), list(
+  `konsentrasi`= formatter("span", style = ~ style(color = "grey",font.weight = "bold")),
+  `waktu`= formatter("span", style = ~ style(color = "grey",font.weight = "bold")),
+  `lemak`= color_tile("aquamarine", "aquamarine2"),
+  `abu`= color_tile("lavenderblush", "lavenderblush2")
+))
+```
+
+
+------
+
+Untuk menguji hipotesis apakah faktor-faktor tersebut berpengaruh terhadap Kandungan Lemak dan Abu kulit ikan (dua variabel dependen) secara simultan, perlu dilakukan pengujian **Two-Way Manova**. Untuk melakukan pengujian ini, terlebih dahulu diilustrasikan langkah kerja sebagai berikut
+
+```{r}
+
+grViz("digraph flowchart {
+      node [fontname = Helvetica, shape = oval, color = Lavender, style = filled]  
+      tab1 [label = '@@1', shape = plaintext, fillcolor = Beige]
+      tab2 [label = '@@2', shape = plaintext, fillcolor = Beige]
+      tab3 [label = '@@3']
+      tab4 [label = '@@4', fillcolor = AquaMarine, shape = egg]
+      tab5 [label = '@@5', fillcolor = Coral, shape = egg]
+      tab6 [label = '@@6']
+      tab7 [label = '@@7']
+      tab8 [label = '@@8', fillcolor = LemonChiffon, shape = diamond]
+      tab9 [label = '@@9', fillcolor = AquaMarine, shape = egg]
+      tab10 [label = '@@10', fillcolor = Coral, shape = egg]
+      tab11 [label = '@@11']
+      tab12 [label = '@@12', shape = square, fillcolor = Beige]
+
+      # edge definitions with the node IDs
+      tab1 -> tab2
+      tab2 -> tab3
+      tab3 -> tab4 -> tab6
+      tab3 -> tab5 -> tab7
+      tab6 -> tab8 -> tab9
+      tab7 -> tab8 -> tab10
+      tab9 -> tab11 -> tab12
+      tab10 -> tab12
+      }
+
+      [1]: 'Data Eksperimen'
+      [2]: 'Visualisasi dan Deskripsi Data'
+      [3]: '#1 Uji Asumsi Manova'
+      [4]: 'Layak'
+      [5]: 'Tidak'
+      [6]: '#2 General Manova'
+      [7]: '#2 Robust Manova'
+      [8]: 'Signifikan?'
+      [9]: 'Ya'
+      [10]: 'Tidak'
+      [11]: '#3 Post-Hoc Test'
+      [12]: 'End'
+      ")
+```
+
+------
+
+## (3) Deskripsi dan Visualisasi Data
+
+Langkah selanjutnya adalah mendeskripsikan dan memvisualisasikan data sehingga memberikan gambaran secara umum tentang pengamatan yang diperoleh. 
+
+```{r}
+data$konsentrasi <- as.factor(data$konsentrasi)
+data$waktu <- as.factor(data$waktu)
+
+# deskripsi variabel Lemak berdasarkan faktor
+data %>% group_by(waktu) %>%  summarise(n = n(), mean = mean(lemak), sd = sd(lemak))
+data %>% group_by(konsentrasi) %>%  summarise(n = n(), mean = mean(lemak), sd = sd(lemak))
+
+# deskripsi variabel Abu berdasarkan faktor
+data %>% group_by(waktu) %>%  summarise(n = n(), mean = mean(abu), sd = sd(abu))
+data %>% group_by(konsentrasi) %>%  summarise(n = n(), mean = mean(abu), sd = sd(abu))
+
+```
+
+
+Selanjutnya disajikan Violin + Box Plot sebagai gambaran sebaran data
+
+```{r}
+
+# Viloin + Box Plot by faktor waktu
+
+sample_waktu = data %>% group_by(waktu) %>% summarize(num=n())
+
+data %>%
+  left_join(sample_waktu) %>%
+  mutate(myaxis = paste0(waktu, "\n", "n=", num)) %>%
+  ggplot(aes(x=myaxis, y=lemak, fill=waktu)) +
+  geom_violin(width=1) +
+  geom_boxplot(width=0.1, color="white", alpha=0.2) +
+  scale_fill_viridis(discrete = T, option = "D") +
+  theme( legend.position="none", plot.title = element_text(size=11)) +
+  ggtitle("Violin + Box Plot Variabel Waktu x Lemak") +
+  xlab("") + theme_classic()
+
+data %>%
+  left_join(sample_waktu) %>%
+  mutate(myaxis = paste0(waktu, "\n", "n=", num)) %>%
+  ggplot(aes(x=myaxis, y=abu, fill=waktu)) +
+  geom_violin(width=1) +
+  geom_boxplot(width=0.1, color="white", alpha=0.2) +
+  scale_fill_viridis(discrete = T, option = "D") +
+  theme( legend.position="none", plot.title = element_text(size=11)) +
+  ggtitle("Violin + Box Plot Variabel Waktu x Abu") +
+  xlab("") + theme_classic()
+
+
+```
+
+Dari gambar pertama (Waktu x Lemak), dapat dilihat bahwa tidak terlalu tampak perbedaan sebaran data output Lemak pada tiga kondisi berbeda. Pun juga dengan (Abu x Lemak) yang menggambarkan pola dan distribusi yang serupa.
+
+
+```{r}
+
+# Viloin + Box Plot by faktor konsentrasi
+
+sample_konsen = data %>% group_by(konsentrasi) %>% summarize(num=n())
+data %>%
+  left_join(sample_konsen) %>%
+  mutate(myaxis = paste0(konsentrasi, "\n", "n=", num)) %>%
+  ggplot(aes(x=myaxis, y=lemak, fill=konsentrasi)) +
+  geom_violin(width=1) +
+  geom_boxplot(width=0.1, color="white", alpha=0.2) +
+  scale_fill_viridis(discrete = T, option = "D") +
+  theme( legend.position="none", plot.title = element_text(size=11)) +
+  ggtitle("Violin + Box Plot Variabel Konsentrasi x Lemak") +
+  xlab("") + theme_classic()
+
+data %>%
+  left_join(sample_konsen) %>%
+  mutate(myaxis = paste0(konsentrasi, "\n", "n=", num)) %>%
+  ggplot(aes(x=myaxis, y=abu, fill=konsentrasi)) +
+  geom_violin(width=1) +
+  geom_boxplot(width=0.1, color="white", alpha=0.2) +
+  scale_fill_viridis(discrete = T, option = "D") +
+  theme( legend.position="none", plot.title = element_text(size=11)) +
+  ggtitle("Violin + Box Plot Variabel Konsentrasi x Abu") +
+  xlab("") + theme_classic()
+
+```
+
+
+Tidak seperti pada faktor Waktu, faktor Konsentrasi lebih tampak memiliki perbedaan secara visual seiring perbedaan kadar Konsentrasi larutan. 
+
+------
+
+## (4) Pengujian Asumsi Manova
+
+Model Manova dibangun berdasarkan beberapa asumsi. Beberapa yang utama adalah:
+
+1. _Multivariate Normality_; variabel dependen berdistribusi normal secara bersamaan pada setiap faktor
+
+2. _Homogenitas Varians_; varians dalam populasi faktor seragam
+
+3. _No Multivariate Outliers_; pengamatan yang menyebar signifikan berbeda dibandingkan dengan sebaran data pada umumnya
+
+4. _Non Multicolinearity_; tidak terjadi korelasi yang tinggi pada antar variabel dependen
+
+5. _Linearity_; terdapat pola cenderung linear antar variabel dependen dalam faktor 
+
+Sebelum melakukan pengujian Manova secara umum, seluruh asumsi tersebut haruslah dipenuhi. Seluruh asumsi tersebut memang cenderung lebih 'mudah' terpenuhi ketika data yang diperoleh relatif cukup besar (i.e. >50 data). 
+
+------
+
+### (4.1) Multivariate Normality 
+
+Pengujian asumsi normalitas multivariat dilakukan terhadap variabel dependen dengan melihat skewness, kurtosis, dan multivariat normality. Dengan menggunakan Mardia's Test, pengujian dilakukan sebagai berikut
+
+```{r}
+mardia(data[, c("lemak", "abu")])$mv.test
+
+```
+
+Dari hasil tersebut, p-value pada kurtosis non signifikan (p > 0.05) namun pada skewness signifikan (p < 0.05). Oleh karena itu **hipotesis nol bahwa terdapat normalitas multivariat pada data ini ditolak**. Hal ini menandakan bahwa terdapat masalah pada normalitas multivariat. Ketidaknormalan multivariat yang terjadi dapat dipahami karena beberapa hal, seperti jumlah sampel yang relatif sedikit dan efek tes faktor yang mungkin memberikan hasil yang sangat berbeda.
+
+------
+
+### (4.2) Homogenitas Varians
+
+Homogenitas varians diuji menggunakan tes Box-M pada variabel dependen untuk masing-masing faktor.
+
+```{r}
+boxM(cbind(lemak, abu) ~ konsentrasi, data = data)
+boxM(cbind(lemak, abu) ~ waktu, data = data)
+
+```
+
+
+Hasil Box's M-test menunjukkan bahwa variabel dependen berdasarkan faktor Konsentrasi signifikan (p < 0.05) sedangkan berdasarkan faktor Waktu non signifikan (p > 0.05). Berdasarkan hasil tersebut, dapat disimpulkan bahwa pada variabel dependen memiliki matriks covariance yang homogen di dalam faktor waktu dan cenderung tidak memiliki matriks covariance yang tidak homogen di dalam faktor Konsentrasi. Walaupun demikian, Box's M-test memiliki 'kelemahan' akurasi pada sampel dengan pengamatan yang kecil.
+
+
+Sebagai komplementari atas Box's M-test, dilakukan pengujian yang hampir serupa dengan  menggunakan Bartlett Test khusus untuk faktor Konsentrasi.
+
+
+```{r}
+bartlettTests(data[,3:4], data$konsentrasi)
+
+```
+
+Hasilnya memang kedua variabel (Lemak dan Abu) memang cenderung tidak memiliki varians yang homogen pada faktor Konsentrasi (p < 0.05)
+
+------
+
+### (4.3) No Multivariat Outlier
+
+Untuk menguji outlier secara multivariat dapat menggunakan parameter pengujian Mahalanobis Distance sebagai berikut
+
+```{r}
+mahalanobis_distance(data = data[, c("lemak", "abu")])$is.outlier
+
+```
+
+Dari hasil tersebut, seluruh pengamatan bukan merupakan multivariat outlier (seluruh `is.outlier` = FALSE menandakan p > 0.05)
+
+------
+
+### (4.4) Non Multicolinearity
+
+Pengujian non multikolinearitas dapat dilakukan dengan menggunakan korelasi antar variabel dependen
+
+```{r}
+data %>% cor_test (lemak, abu)
+```
+
+Hasil korelasi Pearson menunjukkan nilai (-0.62) yang dapat disimpulkan bahwa tidak terjadi multikolinearitas (hasil korelasi kurang dari {+/-} 0.80 sebagai batas korelasi tinggi)
+
+------
+
+### (4.5) Linearitas
+
+Menguji linearitas pada data sampel yang relatif kecil memang agak sulit dilihat. Walaupun demikian kita tetap dapat membuat Scatter Plot dari variabel dependen berdasarkan faktor sebagai berikut
+
+```{r}
+
+# berdasarkan faktor waktu
+c1 <- data  %>% group_by(waktu) %>% 
+  filter(waktu == "30") %>% 
+  ggplot(aes(x = lemak, y = abu)) +
+  geom_point(color="navy", shape=20, alpha=0.5, size=4, stroke = 1) + 
+  ggtitle("Waktu: 30") + theme_classic()
+
+c2 <- data  %>% group_by(waktu) %>%
+  filter(waktu == "60") %>%
+  ggplot(aes(x = lemak, y = abu)) +
+  geom_point(color="brown", shape=20, alpha=0.5, size=4, stroke = 1) +
+  ggtitle("Waktu: 60") + theme_classic()
+
+c3 <- data  %>% group_by(waktu) %>%
+  filter(waktu == "90") %>%
+  ggplot(aes(x = lemak, y = abu)) +
+  geom_point(color="magenta", shape=20, alpha=0.5, size=4, stroke = 1) +
+  ggtitle("Waktu: 90") + theme_classic ()
+
+grid.arrange(c1, c2, c3, ncol=3)
+```
+
+Dengan data yang relatif sedikit, belum menggambarkan pola 'linear' yang terlihat. 
+
+```{r}
+
+# berdasarkan faktor konsentrasi
+c4 <- data  %>% group_by(konsentrasi) %>%
+  filter(konsentrasi == "0") %>%
+  ggplot(aes(x = lemak, y = abu)) +
+  geom_point(color="violetred3", shape=20, alpha=0.5, size=4, stroke = 1) +
+  ggtitle("Konsentrasi: 0") + theme_classic()
+
+c5 <- data  %>% group_by(konsentrasi) %>%
+  filter(konsentrasi == "0.25") %>% 
+  ggplot(aes(x = lemak, y = abu)) +
+  geom_point(color="chartreuse1", shape=20, alpha=0.5, size=4, stroke = 1) +
+  ggtitle("Konsentrasi: 0.25") + theme_classic()
+
+c6 <- data  %>% group_by(konsentrasi) %>%
+  filter(konsentrasi == "0.5") %>%
+  ggplot(aes(x = lemak, y = abu)) +
+  geom_point(color="royalblue4", shape=20, alpha=0.5, size=4, stroke = 1) +
+  ggtitle("Konsentrasi: 0.50") + theme_classic()
+
+c7 <- data  %>% group_by(konsentrasi) %>%
+  filter(konsentrasi == "0.75") %>%
+  ggplot(aes(x = lemak, y = abu)) +
+  geom_point(color="tomato3", shape=20, alpha=0.5, size=4, stroke = 1) +
+  ggtitle("Konsentrasi: 0.75") + theme_classic()
+
+c8 <- data  %>% group_by(konsentrasi) %>%
+  filter(konsentrasi == "1") %>%
+  ggplot(aes(x = lemak, y = abu)) +
+  geom_point(color="seagreen4", shape=20, alpha=0.5, size=4, stroke = 1) +
+  ggtitle("Konsentrasi: 1") + theme_classic()
+
+grid.arrange(c4, c5, c6, c7, c8, ncol=2)
+```
+
+
+dari seluruh Scatter Plot tersebut dan dengan pengamatan yang terbatas, kita belum bisa memutuskan apakah terdapat pola yang linear dalam data. 
+
+------
+
+Secara keseluruhan, dari lima pengujian asumsi yang sudah dilakukan dapat disimpulkan sebagai berikut
+
+```{r}
+tabel_asumsi <- data.frame(Asumsi=c('Normalitas Multivariat', 
+                                    'Homogenitas Varians',
+                                    'No Multivariate Outlier',
+                                    'Non Multicolinearity',
+                                    'Linearity'),
+                 Terpenuhi=c('No',
+                              'No',
+                              'Yes',
+                             'Yes',
+                             'n.a'),  stringsAsFactors = F)
+
+formattable(tabel_asumsi, 
+            align = c("l","c"),
+            list(`Asumsi` = formatter("span", style = ~ style(color = "grey")), 
+                 `Terpenuhi` = formatter("span", style = ~ style(color = "grey"))))
+
+```
+
+
+Dari kelima asumsi dalam Manova, hanya dua yang terpenuhi yaitu aspek No Multivariate Outlier dan Non Multicollinearity. Untuk melanjutkan ke analisis Manova, ada dua skenario dapat  dilakukan, yaitu tetap melanjutkan dengan analisis Manova secara umum (dengan mengabaikan temuan bahwa beberapa asumsi tidak terpenuhi) atau menggunakan Robust Manova (metode non parametrik yang mengakomodasi ketika ada asumsi yang tidak terpenuhi). Sebagai bahan perbandingan, kedua analisis tersebut dilakukan.
+
+-----
+
+## (5) Analisis Manova
+
+### (5.1) Manova Umum
+
+Kita melanjutkan analisis dengan Manova umum seperti biasa walaupun beberapa asumsi tidak terpenuhi. Model pengujiannya sebagai berikut
+
+```{r}
+amatan <- cbind(data$lemak, data$abu)
+manova.umum <- manova(amatan ~ waktu + konsentrasi, data = data)
+summary(manova.umum)
+```
+
+Dari hasil tersebut dapat dilihat bahwa faktor waktu dan konsentrasi memiliki hasil yang signifikan (faktor waktu:: Pillai = 0.434, F = 3.18, p < 0.05) (faktor konsentrasi:: Pillai = 1.301, F = 10.72, p < 0.05) terhadap kandungan lemak dan abu secara simultan. **Kesimpulan: Dengan demikian, dengan derajat kepercayaan 95%, data mendukung pendapat bahwa faktor perlakuan (Waktu dan Konsentrasi Rendaman Alkali) memberikan pengaruh signifikan terhadap Kandungan Lemak dan Abu Kulit Ikan.**
+
+------
+
+### (5.2) Robust Manova
+
+Manova Robust digunakan ketika beberapa asumsi tidak terpenuhi. Analisis ini adalah non-parametrik untuk Manova model. Terdapat beberapa metode estimasi yang digunakan ketika asumsi Manova tidak terpenuhi. Salah satunya dengan menggunakan `adonis` function dengan pendekatan metode mahalanobis untuk menghitung jarak antar pengamatannya. 
+
+
+```{r}
+manova.robust <- adonis(formula = amatan ~ konsentrasi + waktu, data = data, 
+       permutations = 500, method = "mahalanobis")
+manova.robust
+
+```
+
+Metode Robust Manova ternyata memberikan hasil signifikansi yang berbeda dibandingkan dengan Manova umum. Faktor Konsentrasi signifikan terhadap variabel dependen (F.Model = 10.65, p < 0.05) , sedangkan faktor Waktu tidak signifikan terhadap variabel dependen (F.Model = 1.29, p > 0.05). **Kesimpulan: Dengan menggunakan metode estimasi Robust Manova dan dengan derajat kepercayaan 95%, data mendukung pendapat bahwa faktor Konsentrasi Rendaman Alkali memberikan pengaruh signifikan terhadap kandungan Lemak dan Abu kulit ikan. Sedangkan faktor Waktu rendaman tidak signifikan terhadap kandungan Lemak dan Abu kulit ikan.**
+
+------
+
+## (6) Post-Hoc Test
+
+Walaupun tidak memberikan hasil yang seragam, baik Manova dan Robust Manova tetap memberikan adanya hasil yang signifikan antara variabel dependen dan faktor perlakuannya. Oleh karena itu, kita perlu meneruskan ke pengujian lanjutan (post-hoc test) untuk mengetahui dari faktor yang signifikan tersebut, perlakuan mana yang memberikan hasil berbeda terhadap output (variabel dependen). Metode analisis lanjutan ini akan dibagi berdasarkan dua pengujian Manova yang dilakukan
+
+-----
+
+Terdapat beberapa referensi metode dalam melakukan post-hoc test pada Manova. Beberapa diantaranya adalah:
+* Univariat Anova, Tukey HSD, Bonferroni, dan Scheffe Test (untuk metode Manova secara umum) _[1]_ _[2]_ _[3]_ _[4]_
+
+* Bonferroni dan Games Howell Test (untuk metode Robust Manova) _[5]_
+
+* Discriminant Analysis _[6]_
+
+------
+
+### (6.1) Uji Lanjutan Manova Umum
+
+Untuk pengujian lanjutan Manova umum digunakan dua metode uji lanjutan, yaitu univariat anova dan Tukey HSD. Effectsize test juga dilakukan untuk melihat faktor mana yang memberikan efek paling besar terhadap kandungan Lemak dan Abu. 
+
+
+#### (6.1.1) Univariate Anova
+
+Pengujian ini pada dasarnya adalah pengujian two-way anova
+            
+```{r}
+summary.aov(manova.umum)
+
+```
+
+Hasil tersebut serupa dengan apabila kita menjalankan two-way anova pada masing-masing variabel dependen. Response 1 menandakan variabel Lemak sedangkan Response 2 menandakan variabel Abu. Dari univariat anova dapat dilihat bahwa faktor Waktu dan Konsentrasi signifikan berpengaruh terhadap Kandungan Lemak. Sedangkan pada Kandungan Abu, hanya faktor konsentrasi yang signifikan berpengaruh. 
+
+------
+
+#### (6.1.2) Tukey HSD
+
+Untuk pengujian Tukey HSD, kita terlebih dahulu membentuk masing-masing two-way anova. Model two way anova ini akan sama persis dengan uji univariat anova pada bagian Manova.
+
+```{r}
+# model 1:lemak
+an.lemak <- aov(lemak ~ konsentrasi + waktu, data = data)
+TukeyHSD(an.lemak)
+```
+
+Pada pengujian variabel Lemak, perbedaan faktor Konsentrasi dan Waktu memberikan efek yang berbeda apabila:
+
+
+Konsentrasi                                       | Waktu
+------------------------------------------------- | -------------
+Seluruh konsentrasi pengujian vs Konsentrasi 0    | Seluruh waktu pengujian vs waktu 30
+Seluruh konsentrasi pengujian vs Konsentrasi 0.25 | 
+
+
+Adapun perbandingan output Lemak pada perbandingan Konsentrasi > 0.25 tidak memberikan efek signifikan. Pun juga perbandingan Waktu yang tidak dibandingkan dengan level 30 tidak memberikan efek signifikan.
+
+
+```{r}
+# model 2:abu
+an.abu <- aov(abu ~ konsentrasi + waktu, data = data)
+TukeyHSD(an.abu)
+```
+
+Pada pengujian variabel Abu, perbedaan faktor Konsentrasi dan Waktu memberikan efek yang berbeda apabila:
+
+
+Konsentrasi                 | Waktu
+----------------------------| -------------
+Perbandingan 0.75 : 0.00    | Tidak ada
+Perbandingan 1.00 : 0.00    |
+Perbandingan 0.75 : 0.25    | 
+Perbandingan 1.00 : 0.25    |
+Perbandingan 1.00 : 0.50    |
+
+
+Hanya lima perbandingan dengan 'gap' konsentrasi >=0.5 yang signifikan terhadap kadar Abu. Sedangkan pada faktor waktu, tidak memberikan efek yang signifikan terhadap kadar Abu. 
+
+> Pada uji lanjutan Manova umum, baik univariat Anova maupun Tukey HSD memberikan hasil yang seragam.
+
+-----
+
+#### (6.1.3) Effect Size Test
+
+
+```{r}
+## effect size
+eta_squared(manova.umum)
+```
+
+Dari hasil pengujian effect size tersebut, dapat dilihat bahwa faktor Konsentrasi (eta^2^ partial = 0.65) memberikan efek yang lebih besar terhadap variabel dependen dibandingkan dengan Waktu (eta^2^ partial = 0.22).
+
+------
+
+### (6.2) Uji Lanjutan Robust Manova
+
+Untuk pengujian lanjutan Robust Manova digunakan dua metode uji, yaitu Pairwise Comparison Bonferroni dan Games Howell Test. 
+
+-----
+
+#### (6.2.1) Bonferroni Test
+
+Karena terdapat beberapa asumsi yang tidak terpenuhi, Pairwise comparison dilakukan dengan sedikit penyesuaian pada tidak terpenuhinya asumsi homogenitas varians (yaitu dengan setting fitur `var.equal` = FALSE)
+
+
+```{r}
+
+# variabel Kandungan Lemak
+pairwise_t_test(data = data, formula = lemak ~ waktu, pool.sd = F,
+                var.equal = F)
+pairwise_t_test(data = data, formula = lemak ~ konsentrasi, pool.sd = F,
+                var.equal = F)
+
+```
+
+Pada pengujian variabel Lemak, perbedaan faktor Konsentrasi dan Waktu memberikan efek yang berbeda apabila:
+
+
+Konsentrasi                                           | Waktu
+-------------------------------------------------     | -------------
+Seluruh perbandingan konsentrasi, kecuali 0.25 : 0.5  | Tidak ada
+
+
+
+```{r}
+# variabel Kandungan Abu
+pairwise_t_test(data = data, formula = abu ~ waktu, pool.sd = F,
+                var.equal = F)
+pairwise_t_test(data = data, formula = abu ~ konsentrasi, pool.sd = F,
+                var.equal = F)
+```
+
+Pada pengujian variabel Abu, perbedaan faktor Konsentrasi dan Waktu memberikan efek yang berbeda apabila:
+
+
+Konsentrasi                 | Waktu
+----------------------------| -------------
+Perbandingan 0.00 : 0.50    | Tidak ada
+Perbandingan 0.00 : 0.75    |
+Perbandingan 0.00 : 1.00    | 
+Perbandingan 0.25 : 0.75    |
+Perbandingan 0.25 : 1.00    |
+Perbandingan 0.50 : 1.00    |
+
+
+------
+
+#### (6.2.1) Games Howell Test
+
+Games Howell adalah pengujian pairwise yang digunakan ketika asumsi homogenitas varians tidak terpenuhi
+
+```{r}
+# variabel Kandungan Lemak
+
+games_howell_test(data, formula = lemak ~ konsentrasi, conf.level = 0.95,
+                  detailed = FALSE)
+games_howell_test(data, formula = lemak ~ waktu, conf.level = 0.95,
+                  detailed = FALSE)
+```
+
+
+```{r}
+# variabel Kandungan Abu
+
+games_howell_test(data, formula = abu ~ konsentrasi, conf.level = 0.95,
+                  detailed = FALSE)
+games_howell_test(data, formula = abu ~ waktu, conf.level = 0.95,
+                  detailed = FALSE)
+```
+
+
+> Secara keseluruhan, baik Bonferroni maupun Games Howell test memberikan hasil kesimpulan signifikansi yang seragam.
+> Apabila dibandingkan, post hoc test memberikan hasil yang seragam di dalam metode Manova-nya masing-masing. Namun memberikan hasil yang berbeda apabila dibandingkan antar metode Manova.
+
+
+-----
+
+### (6.3) Linear Discriminant Analysis sebagai Uji Lanjutan
+
+Linear Discriminant Analysis digunakan untuk melihat apakah terdapat perbedaan antar faktor terhadap variabel dependen. Metode ini akan mendiskriminasi/melihat perbedaan faktor tanpa menghilangkan informasi dari kedua variabel dependen. 
+
+
+```{r}
+
+# faktor konsentrasi
+lda_konsen <- lda(data$konsentrasi ~ amatan, CV=F)
+lda_konsen
+
+plot_lda_konsen <- data.frame(data[, "konsentrasi"], lda = predict(lda_konsen)$x)
+
+ggplot(plot_lda_konsen) + geom_point(aes(x = lda.LD1, y = lda.LD2, colour = konsentrasi), size = 3) + theme_classic()
+
+```
+
+
+dari gambar tersebut, variabel Lemak dan Abu lebih memberikan efek yang signifikan (terlihat berbeda) pada eksperimen dengan faktor Konsentrasi yang dibandingkan terhadap Konsentrasi 0.00 dan 0.25 (dot point warna merah dan cokelat cenderung 'terpisah' dibandingkan dengan kelompok dot point lainnya)
+
+
+```{r}
+# faktor waktu
+lda_waktu <- lda(data$waktu ~ amatan, CV=F)
+lda_waktu
+
+plot_lda_waktu <- data.frame(data[, "waktu"], lda = predict(lda_waktu)$x)
+
+ggplot(plot_lda_waktu) + geom_point(aes(x = lda.LD1, y = lda.LD2, colour = waktu), size = 3) + theme_classic()
+```
+
+dari gambar tersebut, tercermin bahwa faktor Waktu terlihat kurang bisa memberikan efek yang signifikan berbeda terhadap variabel dependen. Pada ketiga level waktu, sebaran data tidak menunjukkan diskriminasi atau perbedaan/pengelompokkan yang nyata.
+
+------
+
+### (6.4) Mean Plot
+
+Untuk lebih dapat menggambarkan hasil pengujian yang telah dilalui, dibentuk visualisasi dalam bentuk Plot Mean untuk setiap variabel dependen.
+
+```{r}
+
+# efek Waktu dan Konsentrasi terhadap Lemak
+
+lemak_se <- summarySE(data, measurevar="lemak", groupvars=c("waktu","konsentrasi"))
+
+ggplot(lemak_se, aes(x=konsentrasi, y=lemak, colour=waktu, group=waktu)) + 
+  geom_errorbar(aes(ymin=lemak-se, ymax=lemak+se), colour="grey", width=.1, position=position_dodge(0.1)) +
+  geom_line(position=position_dodge(0.1), size=1) +
+  geom_point(position=position_dodge(0.1), size=3, shape=21, fill="white") +
+  xlab("Konsentrasi") + ylab("Lemak") +
+  scale_colour_hue(name="Waktu Rendaman",   
+                   breaks=c("30", "60", "90"),
+                   labels=c("30", "60", "90"),l=80) +                    
+  ggtitle("Efek Waktu dan Konsentrasi Rendaman\nTerhadap Kadar Lemak") +
+  theme_bw () + theme(legend.justification="center", legend.position="bottom") 
+
+```
+
+Grafik tersebut (menghiraukan error bar) mengonfirmasi hasil Manova, bahwa faktor konsentrasi memberikan efek perbedaan (secara visual) yang nyata (walaupun pada kadar Konsentrasi tertentu) terhadap kadar Lemak. Sedangkan ketiga Waktu rendaman memiliki efek yang hampir serupa pada kadar Lemak.
+
+
+```{r}
+abu_se <- summarySE(data, measurevar="abu", groupvars=c("waktu","konsentrasi"))
+
+
+ggplot(abu_se, aes(x=konsentrasi, y=abu, colour=waktu, group=waktu)) + 
+  geom_errorbar(aes(ymin=abu-se, ymax=abu+se), colour="grey", width=.1, position=position_dodge(0.1)) +
+  geom_line(position=position_dodge(0.1), size=1) +
+  geom_point(position=position_dodge(0.1), size=3, shape=21, fill="white") +
+  xlab("Konsentrasi") + ylab("Abu") +
+  scale_colour_hue(name="Waktu Rendaman",   
+                   breaks=c("30", "60", "90"),
+                   labels=c("30", "60", "90"),l=80) +                    
+  ggtitle("Efek Waktu dan Konsentrasi Rendaman\nTerhadap Kadar Abu") +
+  theme_bw () + theme(legend.justification="center", legend.position="bottom") 
+```
+
+Grafik tersebut (menghiraukan error bar) mengonfirmasi hasil Manova, bahwa faktor konsentrasi memberikan efek perbedaan (secara visual) yang nyata terhadap kadar Abu. Sedangkan antar ketiga Waktu rendaman memiliki efek yang hampir serupa kecuali untuk waktu rendaman 90.
+
+------
+
+## (7) Kesimpulan
+
+1. Secara umum, terdapat beberapa asumsi yang tidak terpenuhi oleh data ketika menggunakan Manova sebagai alat analisisnya. Manova adalah metode yang sensitif terhadap 'ketaatan' asumsi, oleh karena itu pendekatan non-parametrik Manova dilakukan sebagai opsi bandingan dari Manova secara umum.
+
+2. Dibentuk dua model Manova, yaitu Monova umum (parametrik) dan Robust Manova (non parametrik).
+
+3. Kedua model tersebut memberikan hasil yang relatif berbeda. Manova umum menyimpulkan bahwa kedua faktor, Waktu dan Konsentrasi, berpengaruh signifikan terhadap Kadar Lemak dan Abu Kulit Ikan. Sedangkan Robust Manova menyimpulkan hanya faktor Konsentrasi yang berpengaruh signifikan terhadap Kadar Lemak dan Abu Kulit Ikan. 
+
+4. Seluruh analisis lanjutan (baik yang bersifat pengujian maupun visualisasi grafis) **lebih condong** mendukung hasil Robust Manova yang menyatakan bahwa hanya faktor Konsentrasi larutan yang signifikan berpengaruh terhadap kadar Lemak dan Abu.
+
+------
+
+
+## Referensi
+
+[1] Aguilar-Trigueros, C. A., & Rillig, M. C. (2016). Effect of different root endophytic fungi on plant community structure in experimental microcosms. _Ecology and Evolution_, 6(22), 8149–8158. https://doi.org/10.1002/ece3.2416
+
+[2] Jarma Arroyo, S. E., Hogan, V., Wisdom, D. A., Moldenhauer, K. A. K., & Seo, H. S. (2020). Effect of geographical indication information on consumer acceptability of cooked aromatic rice. _Foods_, 9(12). https://doi.org/10.3390/foods9121843
+
+[3] Dibaba, F. K., Goro, K. K., Wolide, A. D., Fufa, F. G., Garedow, A. W., Tufa, B. E., & Bobasa, E. M. (2020). Knowledge, attitude and willingness to donate organ among medical students of Jimma University, Jimma Ethiopia: Cross-sectional study. _BMC Public Health_, 20(1). https://doi.org/10.1186/s12889-020-08931-y
+
+[4] Mirmazloum, I., Kiss, A., Erdélyi, É., Ladányi, M., Németh, É. Z., & Radácsi, P. (2020). The effect of osmopriming on seed germination and early seedling characteristics of carum carvi L. _Agriculture (Switzerland)_, 10(4). https://doi.org/10.3390/agriculture10040094
+
+[5] Yoo, S., & Whang, M. (2020). Vagal tone differences in empathy level elicited by different emotions and a co-viewer. _Sensors (Switzerland)_, 20(11). https://doi.org/10.3390/s20113136
+
+[6] Smith, K. N., Lamb, K. N., & Henson, R. K. (2020). Making Meaning out of MANOVA: The Need for Multivariate Post Hoc Testing in Gifted Education Research. _Gifted Child Quarterly_, 64(1), 41–55. https://doi.org/10.1177/0016986219890352
+
+
+## (8) Appendix
+
+Dari data yang ada digambarkan Histogram sebagai berikut:
+
+##### Histogram Kadar Lemak Berdasarkan Jenis Konsentrasi
+
+
+
+```{r}
+
+lemak_kon <- data %>%
+  ggplot( aes(x=lemak, fill=konsentrasi)) +
+  geom_histogram(color="seashell", alpha=0.5, position = 'identity') +
+  scale_fill_manual(values=c("purple3", "turquoise", "firebrick2", "forestgreen", "goldenrod2")) +
+  theme_classic() + ggtitle("Distribusi Kadar Lemak Rendaman Berdasarkan Jenis Konsentrasi") +
+  labs(fill="") + xlab("Kadar Lemak") + ylab("Frekuensi")
+
+lemak_kon
+
+```
+
+##### Histogram Kadar Abu Berdasarkan Jenis Konsentrasi
+
+```{r}
+abu_kon <- data %>%
+  ggplot( aes(x=abu, fill=konsentrasi)) +
+  geom_histogram(color="seashell", alpha=0.5, position = 'identity') +
+  scale_fill_manual(values=c("purple3", "turquoise", "firebrick2", "forestgreen", "goldenrod2")) +
+  theme_classic() + ggtitle("Distribusi Kadar Abu Rendaman Berdasarkan Jenis Konsentrasi") +
+  labs(fill="") + xlab("Kadar Abu") + ylab("Frekuensi")
+
+abu_kon
+```
+
+##### Histogram Kadar Lemak Berdasarkan Jenis Waktu
+
+
+```{r}
+lemak_wa <- data %>%
+  ggplot( aes(x=lemak, fill=waktu)) +
+  geom_histogram(color="seashell", alpha=0.5, position = 'identity') +
+  scale_fill_manual(values=c("firebrick2", "forestgreen", "goldenrod2")) +
+  theme_classic() + ggtitle("Distribusi Kadar Lemak Rendaman Berdasarkan Jenis Waktu") +
+  labs(fill="") + xlab("Kadar Lemak") + ylab("Waktu")
+
+lemak_wa
+```
+
+##### Histogram Kadar Abu Berdasarkan Jenis Waktu
+
+```{r}
+abu_wa <- data %>%
+  ggplot( aes(x=abu, fill=waktu)) +
+  geom_histogram(color="seashell", alpha=0.5, position = 'identity') +
+  scale_fill_manual(values=c("firebrick2", "forestgreen", "goldenrod2")) +
+  theme_classic() + ggtitle("Distribusi Kadar Abu Rendaman Berdasarkan Jenis Waktu") +
+  labs(fill="") + xlab("Kadar Abu") + ylab("Waktu")
+
+abu_wa
+```
+
+##### Histogram Kadar Lemak dan Abu Rendaman Kulit Ikan
+
+```{r}
+
+hist(data$lemak, col=rgb(0/255,250/255,154/255,0.5),
+     xlab="Kandungan (Lemak & Abu)", 
+     ylab="Frekuensi", border = "gray",
+     main="Distribusi Kandungan Lemak dan Abu Kulit Ikan")
+
+hist(data$abu , border = "gray", col=rgb(255/255,215/255,0/255,0.5), add=T)
+
+
+legend("topright", legend=c("Lemak","Abu"),
+       col=c(rgb(0/255,250/255,154/255,0.5),
+             rgb(255/255,215/255,0/255,0.5)), pt.cex=2, pch=15 )
+
+```
+
+
