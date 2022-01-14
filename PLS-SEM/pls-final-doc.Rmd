@@ -1,0 +1,285 @@
+---
+title: 'PLS: Organisasi & Perilaku Strategik'
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+Pada analisis PLS-SEM sebelumnya, data yang digunakan adalah _agregat_, yaitu menjumlahkan jawaban responden per masing-masing apotek. Kondisi ini menghasilkan model PLS dengan signifikansi 12/18 dari total hipotesis yang diajukan dan evaluasi kriteria reliabilitas model yang terbilang cukup tinggi (seluruh variabel > 0.90). Hal ini memang layak untuk dicurigai. Dugaannya adalah terdapat korelasi yang sangat tinggi antar indikator. Exploratory Factor Analysis dapat menjadi salah satu solusi untuk mengatasi hal ini yaitu dengan mengelompokkan indikator-indikator yang identik dalam satu variabel. Namun sayangnya, hasil EFA kemarin hanya menghasilkan tiga variabel utama. Hal ini dapat mengubah total model penelitian yang diajukan.
+
+------
+
+Berdasarkan kondisi di atas dan dengan pertimbangan bahwa: (1) diinginkan porsi signifikansi hgipotesis yang relatif besar (minimal 12/18) dan (2) evaluasi model yang cukup reasonable (tidak terlalu tinggi -too good to be true-, tidak juga terlalu rendah), maka dilakukan beberapa kali simulasi dan pendekatan (termasuk package) untuk membentuk model PLS-SEM. Beberapa kali simulasi dilakukan dan menghasilkan model yang optimal dengan:
+
+* Data yang digunakan **tidak lagi agregat** melainkan data asli hasil responden. 
+* Tiap **platform dianggap sebagai satu pengamatan** (jadi misal satu apotek punya 3 platform yang digunakan maka dianggap 3 sampel)
+* Permasalahan missing value atau isian kosong dalam hasil kuesioner, diisi dengan pendekatan `mean_replacement` dengan menggunakan perhitungan (natural syntax) yang disediakan dalam package R yang digunakan (i.e., `seminr`). Dengan kondisi ini, jumlah sampel yang digunakan sebanyak 660.
+
+Pada bagian ini, yang disajikan hanya proses akhir dari simulasi yang dilakukan. Penyajian akan disamakan dengan informasi Tabel dalam penelitian rujukan: __M. Jeong, H.Oh / International Journal of Hospitality Management 65 (2017) 115–124)__. Perhitungan sebagai berikut:
+
+------
+
+### Library dan Data
+
+Library dan data yang digunakan sebagai berikut
+
+```{r}
+pacman::p_load(seminr, readr, formattable, dplyr, knitr, kableExtra, purrr,
+               webshot)
+
+data_normal <- read_delim("hasil_kuesioner_normal_non_agregat.csv", 
+    delim = ";", escape_double = FALSE, trim_ws = TRUE)
+
+head(data_normal[,1:15], 10) %>% kbl(booktabs = T) %>%
+  kable_styling(latex_options = c("striped", "hold_position")) # hanya 10 pengamatan dan 15 indikator
+
+```
+
+------
+
+### Membentuk Model PLS
+
+
+Kemudian kita membentuk model PLS SEM dengan dua langkah utama:
+
+* Membentuk measurement model (outer model)
+* Membentuk structural model (inner model)
+
+
+```{r}
+# bentuk outer model
+# composite maksudnya adalah variabel dibentuk oleh indikator-indikator
+# indikator (item_names) adalah indikator final dalam model, apabila tidak ada dalam model berarti indikator tersebut telah dikeluarkan dalam proses simulasi
+# indikator yang tidak lulus validitas reliabilitas pretest awal, tidak dimasukkan
+
+outer <- constructs(
+  composite("ComQ", item_names = c("cq1","cq2","cq4","cq5")),
+  composite("OppB", item_names = c("ob3","ob4","ob5")),
+  composite("SocD", item_names = c("sd2","sd3","sd5")),
+  composite("FinD", item_names = c("fd2","fd3")),
+  composite("RelV", item_names = c("rv1","rv2","rv3","rv4","rv5")),
+  composite("RelS", item_names = c("rs1","rs2","rs3","rs5")),
+  composite("TrsT", item_names = c("tr1","tr2","tr5")),
+  composite("RelC", item_names = c("rc1","rc2","rc5")),
+  composite("RelP", single_item("rp"))
+)
+
+# menyatakan bahwa hubungan indikator dan variabel berbentuk reflektif
+outer <- as.reflective(outer)
+
+```
+
+
+
+```{r}
+# bentuk inner model
+# paths artinya bahwa variabel memiliki jalur struktural ke variabel lain
+
+inner <- relationships(
+  paths(from = "ComQ", to = c("RelV", "RelS", "TrsT")),
+  paths(from = "OppB", to = c("RelV", "RelS", "TrsT")),
+  paths(from = "SocD", to = c("RelV", "RelS", "TrsT")),
+  paths(from = "FinD", to = c("RelV", "RelS", "TrsT")),
+  paths(from = "RelV", to = c("RelS", "RelC", "TrsT")),
+  paths(from = "RelS", to = "RelC"),
+  paths(from = "TrsT", to = "RelC"),
+  paths(from = "RelC", to = "RelP")
+)
+
+```
+
+
+Setelah membentuk model outer dan inner, selanjutnya kita membentuk model PLS secara keseluruhan. Seperti yang diuraikan di atas, nilai yang kosong (missing value akan diisi dengan menggunakan pendekatan `mean_replacement`)
+
+
+```{r}
+model_pls <- estimate_pls(data = data_normal, measurement_model = outer,
+                          structural_model = inner,
+                          missing = mean_replacement, # handle missing value
+                          missing_value = NA)
+
+model_pls_summary <- summary(model_pls)
+
+```
+
+------
+
+
+### Evaluasi Model
+
+Untuk melakukan evaluasi model dan signifikansinya PLS-SEM mensyaratkan melakukan bootstraping.
+
+```{r}
+# bootstrap
+# seed adalah angka random
+# nboot adalah jumlah sampel bootstrap
+
+model_pls_boot <- bootstrap_model(seminr_model = model_pls,
+                                  nboot = 1000, seed = 1850)
+
+sum_model_pls_boot <- summary(model_pls_boot)
+
+```
+
+***
+
+#### Evaluasi Measurement Model (Outer)
+
+Tabel 1 pada paper rujukan menampilkan informasi kriteria outer model. Dalam model ini, tabel serupa ditampilkan sebagai berikut:
+
+```{r}
+options(scipen = 999)
+tabel_loading <- as.data.frame(sum_model_pls_boot$bootstrapped_loadings)
+tabel_loading %>% mutate(across(where(is.numeric), ~ round(., 3))) %>% 
+  kbl(booktabs = T) %>% kable_styling(latex_options = c("striped", "hold_position"))
+
+```
+
+Dari tabel tersebut dapat dilihat bahwa seluruh nilai t-stat (T Stat.) signifikan yang ditandai dengan tidak adanya nilai 0 antara rentang nilai confidence interval 2.5% dan 97.5%. Dengan demikian dapat disimpukan bahwa seluruh nilai Loading Factor signifikan (pvalue < 0.05) dan menunjukkan nilai konvergenitas yang baik terhadap variabel latennya. 
+
+-------
+
+Selanjutnya, Tabel 2 pada paper rujukan menyajikan nilai kualitas pengukuran yang berisi reliabilitas alpha, reliabilitas komposit (rho), average variance extracted (AVE), dan korelasi antar variabel laten. Reliabilitas alpha dan rho memiliki nilai ambang batas 0.70. Adapun AVE memiliki nilai ambang batas 0.50. Pada penelitian ini, hasil serupa dapat diperoleh dan ditampilkan sebagai berikut: 
+
+```{r}
+# reliabilitas alpha, rho, dan AVE
+
+options(scipen = 999)
+model_pls_summary$reliability
+
+tabel_reliabilitas <- as.data.frame(model_pls_summary$reliability)
+tabel_reliabilitas %>% mutate(across(where(is.numeric), ~ round(., 3))) %>%
+  kbl(booktabs = T) %>% kable_styling(latex_options = c("striped", "hold_position"))
+
+```
+
+Dapat dilihat bahwa seluruh indikator alpha, rho, dan AVE telah memenuhi kriteria yang dipersyaratkan. Nilainya juga tergolong reasonable.
+
+
+Selanjutnya, korelasi antar variabel laten dapat ditampilkan sebagai berikut:
+
+
+```{r}
+# korelasi antar variabel laten
+
+tabel_korelasi <- as.data.frame(model_pls_summary$validity$fl_criteria)
+tabel_korelasi %>% mutate(across(where(is.numeric), ~ round(., 3))) %>% 
+  kbl(booktabs = T) %>% kable_styling(latex_options = c("striped", "hold_position"))
+
+```
+
+Dari matriks tersebut kita dapat menentukan discriminant validity dari model dengan menggunakan kriteria Fornell & Larcker. Kriterianya adalah nilai korelasi variabel terhadap dirinya sendiri harus lebih besar dibandingkan dengan korelasi terhadap variabel lain. Pada matriks nilai korelasi variabel terhadap dirinya sendiri (nilai diagonal) lebih besar dibandingkan dengan variabel lainnya. Dengan demikian discriminant validity terpenuhi.
+
+
+-------
+
+#### Evaluasi Structural Model (Inner) dan Kebaikan Model
+
+Tabel 3 paper rujukan menyajikan signifikansi path coefficient dalam model disertai dengan nilai VIF (parameter multikolinearitas) dan f^2^ (parameter effect size). Pada penelitian ini, parameter-parameter tersebut dapat disajikan sebagai berikut:
+
+
+```{r}
+# path coefficient
+
+tabel_path <- as.data.frame(sum_model_pls_boot$bootstrapped_paths)
+tabel_path %>% mutate(across(where(is.numeric), ~ round(., 3))) %>%
+  kbl(booktabs = T) %>% kable_styling(latex_options = c("striped", "hold_position"))
+
+```
+
+Dari tabel tersebut dapat disimpulkan sebagai berikut (perhatikan rentang confidence interval 2.5% dan 97.5%; apabila ada nilai 0 diantaranya, maka non-signifikan):
+
+1. Hubungan CQ terhadap RV **non-signifikan**
+2. Hubungan CQ terhadap RS **signifikan** dan **positif**
+3. Hubungan CQ terhadap TR **signifikan** dan **positif**
+4. Hubungan OB terhadap RV **signifikan** dan **negatif**
+5. Hubungan OB terhadap RS **signifikan** dan **negatif**
+6. Hubungan OB terhadap TR **signifikan** dan **negatif**
+7. Hubungan SD terhadap RV **signifikan** dan **positif**
+8. Hubungan SD terhadap RS **non-signifikan**
+9. Hubungan SD terhadap TR **signifikan** dan **positif**
+10. Hubungan FD terhadap RV **signifikan** dan **positif**
+11. Hubungan FD terhadap RS **non-signifikan**
+12. Hubungan FD terhadap TR **non-signifikan**
+13. Hubungan RV terhadap RS **signifikan** dan **positif**
+14. Hubungan RV terhadap TR **signifikan** dan **positif**
+15. Hubungan RV terhadap RC **signifikan** dan **positif**
+16. Hubungan RS terhadap RC **signifikan** namun **negatif**
+17. Hubungan TR terhadap RC **signifikan** dan **positif**
+18. Hubungan RC terhadap RP **non-signifikan**
+
+
+
+Untuk mengetahui nilai VIF pada hubungan struktural sebagai berikut:
+
+```{r}
+# vif
+
+model_pls_summary$vif_antecedents
+
+```
+
+Adapun nilai f^2^ sebagai berikut:
+
+```{r}
+# effect size
+
+tabel_fsquare <- as.data.frame(model_pls_summary$fSquare)
+tabel_fsquare %>% mutate(across(where(is.numeric), ~ round(., 3))) %>%
+  kbl(booktabs = T) %>% kable_styling(latex_options = c("striped", "hold_position"))
+
+```
+
+
+Untuk mengetahui nilai _R_^2^ dari model dapat diperoleh dengan cara:
+
+```{r}
+# rSquared
+
+tabel_rsquare <- as.data.frame(model_pls$rSquared)
+tabel_rsquare %>% mutate(across(where(is.numeric), ~ round(., 3))) %>%
+  kbl(booktabs = T) %>% kable_styling(latex_options = c("striped", "hold_position"))
+
+```
+
+--------
+
+#### Gambar Model Struktural
+
+Untuk menggambarkan model struktural PLS SEM secara keseluruhan sebagai berikut.
+
+
+```{r}
+# custom plot
+
+tema_pls <- seminr_theme_create(plot.specialcharacters = F,
+                                sm.edge.boot.show_t_value = T,
+                                sm.edge.boot.show_p_value = T, 
+                                sm.edge.boot.show_ci = F, 
+                                plot.adj = F, 
+                                sm.edge.negative.color = "red",
+                                sm.node.fill = "aquamarine",
+                                sm.node.color = "aquamarine3",
+                                construct.reflective.shape = "egg",
+                                mm.node.color = "peachpuff2",
+                                mm.node.fill = "peachpuff",
+                                mm.edge.positive.color = "peachpuff2")
+```
+
+
+
+```{r}
+# membuat chart
+install_phantomjs()
+plot(model_pls_boot, title = "Model PLS-SEM", theme = tema_pls)
+
+# simpan chart
+save_plot("model_pls_sem.pdf")
+
+```
+
+
+------
+
+### END
+
