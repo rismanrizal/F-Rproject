@@ -16,6 +16,9 @@ which(!complete.cases(cr)) #cell na
 cr_noNA <- which(!complete.cases(cr))
 crv1 <- cr[-cr_noNA,] #diperoleh 28.638 row
 
+#membuat dataframe baru dengan menghilangkan nilai na (Simple)
+cr_complete <- cr[complete.cases(cr),]
+
 #membuat histogram dari data
 hist(crv1$experience) #menghasilkan kecenderungan skewed
 
