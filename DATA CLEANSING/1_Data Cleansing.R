@@ -81,4 +81,12 @@ head(crv5)
 #menyimpan data hasil seleksi ke csv
 write.csv(crv5, file = "crclean.csv", row.names = T)
 
+#REVERSE LIKERT SCALE (ex: 5 Likert)
+reverseCode <- function(x, min = 1, max = 5){
+  if(min(x, na.rm = TRUE) < min | max(x, na.rm = TRUE) > max){
+    warning("Warning: input is outside the range of the scale.")
+  }
+  sort(min:max, decreasing = TRUE)[x+(1-min)]
+}
+
 #----END----
