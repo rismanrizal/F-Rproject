@@ -1,0 +1,661 @@
+---
+title: "Perbandingan K-Prototype dan Two Step Cluster dalam Menggerombolkan Mixed-Data"
+output: html_notebook
+---
+
+Diketahui terdapat data mengenai nama-nama makanan khas dari wilayah di seluruh Indonesia beserta dengan bahan baku dan karakteristik rasanya. Ingin dilakukan pengujian bagaimana penggerombolan nama-nama makanan tersebut. Data yang tersedia memiliki tipe variabel yang bervariasi (mixed data type). Oleh karena itu, dibutuhkan metode khusus untuk menggerombolkannya. Akan diuji dua metode penggerombolan yang bisa mengatasi permasalahan tipe data bervariasi tersebut, yaitu: (1) K-Prototype Clustering dan (2) Two-Step Clustering. Hasil dari kedua metode ini akan dibandingkan untuk kemudian dipilih metode mana yang memberikan hasil penggerombolan terbaik. 
+
+***
+***
+
+
+## A. Library dan Data yang Digunakan
+
+```{r}
+
+pacman::p_load(tidyverse, dplyr, clustMixType, purrr, stringdist, ggplot2, 
+               cluster, factoextra, ggthemes, readxl, kableExtra, 
+               philentropy, entropy, igraph)
+
+# rawdata <- read_excel("data_bersih.xlsx")
+# rawdata %>% head(5) <- menampilkan lima pengamatan awal
+
+```
+
+***
+***
+
+## B. Preprocessing Data
+
+Kita ingin tetap menyimpan `rawdata` sebagai data awal yang memiliki 74 baris pengamatan. Untuk melakukan preprocessing data, dibuat duplikasi datanya. Pada data awal, masih terdapat pengamatan yang kosong (NA) dikarenakan pada beberapa wilayah tidak terdapat data mengenai nama makanan. Daerah yang tidak memiliki nama makanan akan dihilangkan sehingga data tidak mengandung pengamatan yang kosong.
+
+
+```{r}
+# duplikasi data
+bahan_bumbu <- rawdata
+
+# menghilangkan pengamatan NA
+bahan_bumbu_clean <- bahan_bumbu %>% drop_na(bahan_bumbu)
+
+```
+
+Data akhir diperoleh 54 baris pengamatan.
+
+***
+***
+
+## C. K-Prototype Clustering
+
+Setelah memperoleh data yang siap diolah pada `bahan_bumbu_clean`, langkah selanjutnya adalah perlu menentukan jarak yang akan digunakan dalam proses penggerombolan. Seperti yang diketahui, data dominan berisi variabel kategori dan text. Variabel yang terlibat dalam proses penggerombolan adalah `provinsi` (kategori), `nama_makanan` (kategori), `bahan_bumbu` (text), dan variabel berkenaan dengan level rasa (kategori). Secara umum langkah yang dilakukan dalam proses penggerombolan dengan K-Prototype ini sebagai berikut:
+
+
+- Mengubah variabel text pada `bahan_bumbu` dalam bentuk jarak. Akan dibandingkan dua jarak yang umum digunakan pada data text yaitu Levenshtein Distance dan Cosine Distance.
+- Menentukan terlebih dahulu target pada bahan bumbu yang akan dijadikan sebagai perbandingan. Pemilihan ini dilakukan secara random. 
+- Mengubah tipe variabel sesuai dengan karakteristiknya.
+- Mencari jumlah klaster terbaik pada kedua jenis jarak yang digunakan.
+- Membandingkan pendekatan jarak mana (i.e. Levenshtein atau Cosine) yang lebih baik memberikan hasil penggerombolan.
+
+***
+
+##### C.1. Penentuan target bahan bumbu secara random
+
+```{r}
+# penentuan target sebagai perbandingan
+
+set.seed(1009)
+target_bumbu <- sample_n(bahan_bumbu_clean, size = 1)
+target_bumbu
+
+```
+
+Secara random, terpilih makanan **Model** dengan id **a7** dari Sumatera Selatan sebagai target perbandingan.
+
+***
+
+##### C.2. Penghitungan jarak pada data bahan bumbu
+
+Dengan Model sebagai bahan perbandingan, selanjutnya dihitung jarak sebagai berikut.
+
+```{r}
+
+lev <- stringdist(target_bumbu$bahan_bumbu, bahan_bumbu_clean$bahan_bumbu,
+                  method = 'lv') # Levenshtein
+
+cos <- stringdist(target_bumbu$bahan_bumbu, bahan_bumbu_clean$bahan_bumbu,
+                  method = 'cosine') # Cosine
+
+```
+
+Setelah diperoleh kedua jarak tersebut, hasilnya digabungkan dalam dataframe.
+
+
+```{r}
+
+bahan_bumbu_clean$lev_distance <- lev
+bahan_bumbu_clean$cos_distance <- cos
+
+```
+
+
+***
+
+##### C.3. Perubahan tipe variabel sesuai dengan karakteristiknya
+
+Selanjutnya adalah mengubah tipe variabel sehingga sesuai dengan karakteristik datanya. Selain kedua jarak yang digunakan, variabel lain bersifat kategori. Oleh karena itu perlu diubah seluruhnya dalam bentuk factor. 
+
+
+```{r}
+
+bahan_bumbu_clean[, c(1,3,5:9)] <- lapply(bahan_bumbu_clean[, c(1,3,5:9)], 
+                                     FUN = function(y){as.factor(y)})
+
+```
+
+
+Langkah selanjutnya, karena proses perhitungan akan membandingkan dua jarak yang ada, maka dibuatkan masing-masing dataframe sebagai berikut.
+
+
+```{r}
+
+df_lev <- bahan_bumbu_clean[, c(1,3,5,6,7,8,9,12)]
+df_cos <- bahan_bumbu_clean[, c(1,3,5,6,7,8,9,13)]
+  
+```
+
+***
+
+##### C.4. Mencari jumlah gerombol terbaik pada Jarak Levenshtein
+
+Dalam mengestimasi jumlah gerombol terbaik, digunakan pendekatan 'Elbow' plot dengan rentang gerombol maksimal sebanyak delapan. 
+
+
+```{r}
+
+total_with_lev <- c()
+
+for (i in 1:8) {
+  kprotos_lev <- kproto(df_lev, k = i, nstart = 15)
+  
+  total_with_lev[i] <- kprotos_lev$tot.withinss
+}
+
+```
+
+Nilai kedelapan `tot.withinss` pada Levenshtein Distance sebagai berikut 
+
+```{r}
+# menampilkan wss 
+total_with_lev
+
+```
+
+Selanjutnya dibuatkan tampilan 'Elbow' plot-nya sebagai berikut
+
+```{r}
+
+tibble(k = 1:length(total_with_lev),
+       total_error_lev = total_with_lev) %>%
+  ggplot(aes(x = k, y = total_error_lev)) +
+  geom_point(size = 2, color = "tan2") +
+  geom_line(size = 1, color = "rosybrown2" ) +
+  geom_label(
+    label = "Best k", 
+    x = 5,
+    y = 260000,
+    label.padding = unit(0.25, "lines"),
+    label.size = 0.25,
+    color = "gray",
+    fill = "mistyrose") +
+  theme_solarized() + 
+  labs(
+    title = 'Elbow Plot',
+    subtitle = 'Pendekatan mencari jumlah klaster terbaik',
+    caption = 'Levenshtein Distance') + ylab('Total Withinss') + xlab("k")
+  
+```
+
+***
+
+##### C.5. Mencari jumlah gerombol terbaik pada Jarak Cosine
+
+Sama seperti pada Jarak Levenshtein, pada Jarak Cosine juga dilakukan langkah yang serupa.
+
+```{r}
+
+total_with_cos <- c()
+
+for (i in 1:8) {
+  kprotos_cos <- kproto(df_cos, k = i, nstart = 5)
+  
+  total_with_cos[i] <- kprotos_cos$tot.withinss
+}
+
+```
+
+kedelapan `tot.withinss` pada Cosine Distance sebagai berikt 
+
+```{r}
+
+total_with_cos
+
+```
+
+Selanjutnya dibuatkan tampilan 'Elbow' plot-nya sebagai berikut
+
+```{r}
+
+tibble(k = 1:length(total_with_cos),
+       total_error_cos = total_with_cos) %>%
+  ggplot(aes(x = k, y = total_error_cos)) +
+  geom_point(size = 2, color = "aquamarine4") +
+  geom_line(size = 1, color = "aquamarine3" ) +
+  geom_label(
+    label = "Best k", 
+    x = 5,
+    y = 0.61,
+    label.padding = unit(0.25, "lines"),
+    label.size = 0.25,
+    color = "gray",
+    fill = "olivedrab2") +
+  theme_solarized() + 
+  labs(
+    title = 'Elbow Plot',
+    subtitle = 'Pendekatan mencari jumlah klaster terbaik',
+    caption = 'Cosine Distance') + ylab('Total Withinss') + xlab("k")
+  
+```
+
+***
+
+> Dari kedua jarak tersebut, seluruhnya memberikan informasi bahwa k = 5 diestimasi merupakan jumlah gerombol optimal. 
+
+
+
+***
+***
+
+##### C.6. Penggerombolan pada Levenshtein Distance
+
+Langkah selanjutnya adalah melakukan penggerombolan dengan menggunakan nilai k = 5.
+
+```{r}
+
+klaster_lev <- kproto(df_lev, k = 5)
+
+```
+
+
+Tampilan hasil klaster sebagai berikut:
+
+```{r}
+klaster_lev
+
+```
+
+Keseluruhan penggerombolan pada masing-masing variabel terlibat diresumekan sebagai berikut
+
+```{r}
+summary(klaster_lev)
+```
+
+
+Dibuatkan dataframe yang berisi penggerombolan untuk masing-masing baris.
+
+```{r}
+fit_lev <- factor(klaster_lev$cluster, order =  TRUE,
+                                  levels = c(1:5))
+klasterfit_lev <- data.frame(df_lev, fit_lev)
+result_lev <- klaster_lev$centers
+Member <- klaster_lev$size
+klasterresult_lev <- data.frame(Member, result_lev)
+
+klasterfit_lev %>% head(10) # sampel 10 data teratas
+
+```
+
+
+***
+***
+
+##### C.7. Penggerombolan pada Cosine Distance
+
+Langkah selanjutnya adalah melakukan penggerombolan dengan menggunakan nilai k = 5.
+
+
+```{r}
+
+klaster_cos <- kproto(df_cos, k = 5)
+
+```
+
+Tampilan hasil klaster sebagai berikut:
+
+```{r}
+klaster_cos
+
+```
+
+
+Keseluruhan penggerombolan pada masing-masing variabel terlibat diresumekan sebagai berikut
+
+```{r}
+summary(klaster_cos)
+
+```
+
+
+Dibuatkan dataframe yang berisi penggerombolan untuk masing-masing baris.
+
+
+```{r}
+fit_cos <- factor(klaster_cos$cluster, order =  TRUE,
+                                  levels = c(1:5))
+klasterfit_cos <- data.frame(df_cos, fit_cos)
+result_cos <- klaster_cos$centers
+Member_cos <- klaster_cos$size
+klasterresult_cos <- data.frame(Member_cos, result_cos)
+
+klasterfit_cos %>% head(10) # sampel 10 data teratas
+
+```
+
+***
+***
+
+##### C.8. Penggabungan dan perbandingan hasil penggerombolan pada kedua jarak
+
+Setelah memperoleh hasil gerombol, kita gabungkan antara hasil Lev dan Cos sebagai berikut:
+
+```{r}
+df_compar <- cbind(bahan_bumbu_clean[,1:9], 
+                   klasterfit_lev[,9], klasterfit_cos[,9])
+
+names(df_compar)[names(df_compar) == "klasterfit_lev[, 9]"] <- "clustering_lev"
+names(df_compar)[names(df_compar) == "klasterfit_cos[, 9]"] <- "clustering_cos"
+
+df_compar[,c(1,3,10,11)] %>% kbl() %>%
+  kable_material_dark()
+
+```
+
+
+Berdasarkan hasil tersebut, nampaknya metode penggerombolan dengan menggunakan Cosine Distance dapat memberikan hasil lebih optimal dibandingkan dengan Levenshtein Distance, misalnya dapat diperhatikan pada makanan di wilayah Sumatera Selatan, Maluku Utara, dan Kalimantan Tengah.
+
+> Pada K-Prototype Cluster, penggunaan Cosine Distance pada variabel text bahan_bumbu lebih optimal menghasilkan gerombol makanan sesuai dengan asal daerahnya dibandingkan dengan Levenshtein Distance. 
+
+
+
+***
+***
+
+
+### D. Two-Step Clustering
+
+Proses penggerombolan dengan menggunakan Two-Step Cluster atau dikenal juga sebagai Two Step Method for Clustering Mixed Data (TMCM) pada tahap akhirnya merupakan  penggerombolan yang dilakukan melalui dua metode. Yang umum digunakan adalah Hierarchical Clustering **dan** K-Means atau PAM Clustering. Pada kesempatan ini, metode yang digunakan adalah Hierarchical dan K-Means. 
+
+Secara umum, terdapat tiga langkah utama dengan beberapa sub-langkah di dalamnya sebagai berikut:
+
+1. Preprocessing data
+  + Menentukan variabel kategori tertentu yang memiliki sebaran kategori paling banyak sebagai variabel kategori target/base
+  + Membentuk Matriks M yang berisi co-occurence perbandingan variabel kategori target/base dengan variabel kategori lain
+  + Membentuk Matriks D yang merupakan nilai similarity berdasarkan Matriks M
+  
+2. Memberikan nilai pada variabel kategori
+  + Memberikan nilai kepada variabel kategori target/base berdasarkan variabel numerik yang memiliki varians terkecil dilihat per kategorinya.
+  + Nilai kepada setiap kategori pada variabel kategori lain didasarkan pada Matriks D yang diperoleh. 
+  
+3. Penggerombolan
+  + Melakukan penggerombolan Hierarchical dengan pendekatan agglomerative
+  + Menambahkan variabel yaitu berupa rata-rata masing – masing variabel pada masing-masing sub-gerombol (hasil Hierarchical cluster) yaitu semua kategori dari variabel kategori
+  + Dengan penambahan variabel tersebut, dilakukan K-Means Clustering.
+  
+
+***
+
+#### D.1. Preprocessing Data
+
+Data yang digunakan untuk analisis TMCM adalah sebagai berikut
+
+```{r}
+twostep_df <- df_cos[,1:8]
+twostep_df %>% head(10) # cuplikan data
+
+str(twostep_df)
+
+```
+
+Berdasarkan data tersebut, yang tergolong dalam variabel kategori untuk proses penggerombolan adalah variabel level rasa berjumlah 5 variabel. Untuk pemilihan variabel target (yaitu variabel dengan jumlah kategori terbanyak) dilakukan sebagai berikut
+
+```{r}
+
+unique(twostep_df$level_pedas)
+unique(twostep_df$level_gurih)
+unique(twostep_df$level_manis)
+unique(twostep_df$level_asin)
+unique(twostep_df$level_asam)
+
+```
+
+Dari hasil tersebut level_gurih dan level_manis memiliki jumlah kategori terbanyak. Untuk membuat matriks M dipilih variabel **level_gurih**. Selanjutnya, Matriks M dibentuk sebagai berikut:
+
+
+```{r}
+# bentuk terlebih dahulu dataframe khusus dengan tujuan mengurutkan nilai
+m_df <- twostep_df[,2:7]
+m_df <- m_df[order(m_df$level_gurih),]
+
+```
+
+
+**Matriks M**
+
+
+```{r}
+
+M1 <- as.matrix(as_adj(graph_from_data_frame(m_df[,c(3,2)], TRUE)))
+M2 <- as.matrix(as_adj(graph_from_data_frame(m_df[,c(3,4)], TRUE)))
+M3 <- as.matrix(as_adj(graph_from_data_frame(m_df[,c(3,5)], TRUE)))
+M4 <- as.matrix(as_adj(graph_from_data_frame(m_df[,c(3,6)], TRUE)))
+
+m_matriks <- cbind(M1, M2, M3, M4)
+
+```
+
+
+Setelah matriks M terbentuk, langkah selanjutnya adalah membentuk Matriks D sebagai berikut:
+
+```{r}
+
+D1 <- distance(M1, method = "cosine")
+D2 <- distance(M2, method = "cosine")
+D3 <- distance(M3, method = "cosine")
+D4 <- distance(M4, method = "cosine")
+
+d_matriks <- cbind(D1, D2, D3, D4)
+
+```
+
+
+***
+
+#### D.2. Memberikan nilai pada variabel kategori
+
+Dalam memberikan nilai pada variabel kategori, idealnya dipilih variabel numerik dengan varians terkecil. Namun karena pada penelitian ini hanya memiliki satu variabel numerik (representasi jarak pada variabel bahan bumbu), maka pemberian nilai didasarkan pada variabel tersebut.
+
+Untuk variabel kategori target/base nilainya sebagai berikut:
+
+```{r}
+# kategori 1
+mean(twostep_df$cos_distance[twostep_df$level_gurih == "1"], na.rm = T)
+
+# kategori 2
+mean(twostep_df$cos_distance[twostep_df$level_gurih == "2"], na.rm = T)
+
+# kategori 3
+mean(twostep_df$cos_distance[twostep_df$level_gurih == "3"], na.rm = T)
+
+# kategori 4
+mean(twostep_df$cos_distance[twostep_df$level_gurih == "4"], na.rm = T)
+
+# kategori 5
+mean(twostep_df$cos_distance[twostep_df$level_gurih == "5"], na.rm = T)
+
+
+```
+
+Setelah nilai-nilai didapatkan, langkah selanjutnya adalah melakukan assignment pada variabel kategori. Untuk efisiensi dan kemudahan, proses ini dilakukan di Excel sehingga menghasilkan data untuk penggerombolan Hierarchical sebagai berikut:
+
+```{r}
+
+df_hier <- read_excel("datafinalhierarchy.xlsx")
+df_hier %>% head(10)
+
+```
+
+***
+
+#### D.3. Penggerombolan
+
+Selanjutnya adalah dilakukan proses penggerombolan. Pada tahap ini, digunakan parameter **agglomerative** pada prosesnya. Untuk menemukan nilai agglomerative terbaik, disimulasikan perbandingan nilai agglomerative (ac) pada tiap metode yang ada sebagai berikut.
+
+
+```{r}
+
+m <- c("average", "single", "complete", "ward", "weighted")
+names(m) <- c("average", "single", "complete", "ward", "weighted")
+
+# fungsi
+agnes_ac <- function(x){
+  agnes(df_hier[,3:8], diss = F, method = x)$ac
+}
+
+map_dbl(m, agnes_ac)
+
+```
+
+Dari hasil simulasi, metode Ward memberikan nilai agglomerative optimal. Dengan demikian proses penggerombolan hierarchical dilakukan melalui metode Ward. 
+
+
+```{r}
+hie_clust <- agnes(df_hier[,3:8], diss = F, method = "ward")
+plot(hie_clust, labels = F, 
+     main = "Hasil Hierarchical Clustering dengan Agglomerative")
+
+```
+
+
+Setelah memperoleh dendogram sebagaimana di atas, langkah selanjutnya mengoptimasi dengan menentukan jumlah sub-gerombol. Pada beberapa literatur, digunakan estimasi sebanyak sepertiga dari jumlah data. 
+
+
+```{r}
+
+hie_clust$height <- round(hie_clust$height, 2)
+
+hie_clust_klaster <- cutree(hie_clust, k = 18)
+
+```
+
+
+Setelah ditentukan terdapat 18 sub-gerombol, kondisi sebaran data pengamatan pada tiap-tiap sub-gerombol sebagai berikut. 
+
+
+```{r}
+twostep_df2 <- cbind(df_hier, hie_clust_klaster)
+colnames(twostep_df2) [ncol(twostep_df2)] <- 'hClust_cluster'
+table(twostep_df2$hClust_cluster)
+
+```
+
+Langkah selanjutnya yaitu membuat dataframe untuk analisis gerombol dengan K-Means. Langkah pertama adalah dengan membuat rata-rata pada masing-masing variabel sesuai dengan sub-gerombolnya. Langkah kedua adalah menambah variabel baru yang merupakan kategori dari variabel kategori yang ada yang berisi jumlah anggota sub gerombolnya.
+Sama seperti sebelumnya, untuk kemudahan dan efisiensi dataframe ini diolah di Excel. Hasilnya kita import sebagai berikut:
+
+
+```{r}
+
+kmean_df <- read_excel("datafinalkmean.xlsx")
+kmean_df %>% head(10)
+
+```
+
+
+Penggerombolan K-Means sebagai berikut:
+
+
+```{r}
+
+df_kmean <- kmean_df[,-1] %>% remove_rownames %>% 
+  column_to_rownames(var = "nama_makanan")
+
+df_kmean <- scale(df_kmean)
+
+```
+
+
+Selanjutnya adalah menentukan jumlah gerombol optimal dengan menggunakan pendekatan Elbow plot sebagai berikut.
+
+
+```{r}
+fviz_nbclust(df_kmean, kmeans, method = "wss", 
+             k.max = 8, nboot = 25, linecolor = "tomato2")
+
+```
+
+Dari hasil Elbow plot tersebut, diestimasi jumlah k optimal sebanyak 2 atau 4 gerombol. Walaupun demikian, agar dapat diperbandingkan dengan metode K-Prototype diputuskan memilih k = 5 sebagai jumlah gerombol. 
+
+```{r}
+
+set.seed(855)
+kmean_clus <- kmeans(df_kmean, centers = 5, nstart = 25)
+kmean_clus
+
+```
+
+Langkah selanjutnya adalah kita dapat memvisualisasikan hasil penggerombolan akhir sebagai berikut.
+
+```{r}
+#plot hasil
+
+fviz_cluster(kmean_clus, data = df_kmean, palette = "Set1", repel = F,
+             ggtheme = theme_solarized())
+
+```
+
+Selanjutnya karena pada plot tersebut tidak terlalu tampak jelas pembagian gerombolnya, dibuat tabel sehingga dapat diketahui makanan terdapat pada gerombol mana saja.
+
+
+```{r}
+
+klasterfit_kmean <- cbind(bahan_bumbu_clean[,1:9],
+                          cluster_final = kmean_clus$cluster)
+
+klasterfit_kmean[,c(1,3,10)] %>% remove_rownames() %>%
+  kbl() %>%
+  kable_material_dark()
+
+```
+
+Dari hasil akhir TMCM diperoleh empat gerombol dengan komposisi Gerombol 1 sebanyak 7 makanan, Gerombol 2 sebanyak 14 makanan, Gerombol 3 sebanyak 28 makanan, dan Gerombol 4 sebanyak 5 makanan. 
+
+***
+***
+
+
+### E. Perbandingan Antara K-Prototype dan TMCM
+
+Perbandingan antara clustering via K-Prototype dan TMCM dilakukan dengan membuat dataframe gabungan hasil keduanya. 
+
+```{r}
+
+proto_tmcm_df <- cbind(bahan_bumbu_clean[,1:9], df_compar[,11], 
+                       klasterfit_kmean[,10])
+
+colnames(proto_tmcm_df) [10] <- 'cluster_kproto'
+colnames(proto_tmcm_df) [11] <- 'cluster_tmcm'
+  
+```
+
+
+Untuk membandingkan penggerombolan mana yang memberikan hasil optimal, dilakukan pendekatan dengan mencari nilai entropy pada masing-masing hasil. Penggerombolan yang memberikan nilai entropy terkecil dianggap lebih optimal dalam menghasilkan gerombol. Sebagai dasar perbandingan entropy adalah apakah makanan yang digerombolkan mengelompok berdasarkan kedekatan daerah.
+
+```{r}
+tabel_proto <- data.frame(table(proto_tmcm_df$cluster_kproto))
+tabel_tmcm <- data.frame(table(proto_tmcm_df$cluster_tmcm))
+
+```
+
+
+```{r}
+provinsi <- proto_tmcm_df[,c(1,10,11)]
+
+provinsi[,2:3] <- lapply(provinsi[,2:3], 
+                            FUN = function(z) {as.factor(z)})
+```
+
+***
+
+##### E.1. Entropy
+
+
+```{r}
+
+freqs_proto <- table(provinsi$cluster_kproto) / length(provinsi$cluster_kproto)
+freqs_tmcm <- table(provinsi$cluster_tmcm) / length(provinsi$cluster_tmcm)
+
+ent_proto <- entropy.empirical(freqs_proto, unit = "log2")
+ent_tmcm <- entropy.empirical(freqs_tmcm, unit = "log2")
+
+sprintf("Nilai entropy metode K Prototype adalah: %f.", ent_proto)
+sprintf("Nilai entropy metode TMCM adalah: %f.", ent_tmcm)
+
+```
+
+Berdasarkan perbandingan hasil entropy, metode penggerombolan dengan TMCM memiliki nilai entropy terkecil. Dengan demikian dapat disimpulkan metode TMCM lebih memberikan hasil optimal dalam melakukan penggerombolan pada data. 
+
+***
+***
+
+###End
+
+
+
+
